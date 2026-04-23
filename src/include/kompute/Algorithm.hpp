@@ -95,46 +95,19 @@ class Algorithm
         KP_LOG_DEBUG("Kompute Algorithm rebuild started");
 
         this->mMemObjects = memObjects;
-        this->mSpirv = spirv;
 
-        if (specializationConstants.size()) {
-            if (this->mSpecializationConstantsData) {
-                free(this->mSpecializationConstantsData);
-            }
-            uint32_t memorySize =
-              sizeof(decltype(specializationConstants.back()));
-            uint32_t size = specializationConstants.size();
-            uint32_t totalSize = size * memorySize;
-            this->mSpecializationConstantsData = malloc(totalSize);
-            memcpy(this->mSpecializationConstantsData,
-                   specializationConstants.data(),
-                   totalSize);
-            this->mSpecializationConstantsDataTypeMemorySize = memorySize;
-            this->mSpecializationConstantsSize = size;
-        }
-
-        if (pushConstants.size()) {
-            if (this->mPushConstantsData) {
-                free(this->mPushConstantsData);
-            }
-            uint32_t memorySize = sizeof(decltype(pushConstants.back()));
-            uint32_t size = pushConstants.size();
-            uint32_t totalSize = size * memorySize;
-            this->mPushConstantsData = malloc(totalSize);
-            memcpy(this->mPushConstantsData, pushConstants.data(), totalSize);
-            this->mPushConstantsDataTypeMemorySize = memorySize;
-            this->mPushConstantsSize = size;
-        }
-
-        this->setWorkgroup(
-          workgroup,
-          this->mMemObjects.size() ? this->mMemObjects[0]->size() : 1);
-
-        // Descriptor pool is created first so if available then destroy all
-        // before rebuild
+        // Destroy existing Vulkan resources before storing new configuration
+        // to avoid use-after-free (destroy() frees push/spec constants data)
         if (this->isInit()) {
             this->destroy();
         }
+
+        this->setConfiguration(
+          spirv,
+          workgroup,
+          specializationConstants,
+          pushConstants,
+          this->mMemObjects.size() ? this->mMemObjects[0]->size() : 1);
 
         this->createParameters();
         this->createShaderModule();
@@ -150,12 +123,11 @@ class Algorithm
     Algorithm& operator=(const Algorithm&) = delete;
     Algorithm& operator=(const Algorithm&&) = delete;
 
-
     /**
      * Destructor for Algorithm which is responsible for freeing and desroying
      * respective pipelines and owned parameter groups.
      */
-    ~Algorithm() noexcept;
+    virtual ~Algorithm() noexcept;
 
     /**
      * Records the dispatch function with the provided template parameters or
@@ -211,7 +183,7 @@ class Algorithm
     template<typename T>
     void setPushConstants(const std::vector<T>& pushConstants)
     {
-        uint32_t memorySize = sizeof(decltype(pushConstants.back()));
+        uint32_t memorySize = sizeof(T);
         uint32_t size = pushConstants.size();
 
         this->setPushConstants(pushConstants.data(), size, memorySize);
@@ -312,6 +284,75 @@ class Algorithm
     std::shared_ptr<vk::Pipeline> mPipeline;
     bool mFreePipeline = false;
 
+    // Create util functions
+    void createShaderModule();
+    void createPipeline();
+
+    // Parameters
+    void createParameters();
+
+    /**
+     * Stores CPU-side configuration (SPIR-V, workgroup, specialization
+     * constants, push constants) without creating any Vulkan resources.
+     * This is the data-storage portion of rebuild().
+     */
+    template<typename S = float, typename P = float>
+    void setConfiguration(const std::vector<uint32_t>& spirv,
+                          const Workgroup& workgroup,
+                          const std::vector<S>& specializationConstants = {},
+                          const std::vector<P>& pushConstants = {},
+                          uint32_t minWorkgroupSize = 1)
+    {
+        this->mSpirv = spirv;
+
+        if (specializationConstants.size()) {
+            if (this->mSpecializationConstantsData) {
+                free(this->mSpecializationConstantsData);
+            }
+            uint32_t memorySize = sizeof(S);
+            uint32_t size = specializationConstants.size();
+            uint32_t totalSize = size * memorySize;
+            this->mSpecializationConstantsData = malloc(totalSize);
+            memcpy(this->mSpecializationConstantsData,
+                   specializationConstants.data(),
+                   totalSize);
+            this->mSpecializationConstantsDataTypeMemorySize = memorySize;
+            this->mSpecializationConstantsSize = size;
+        }
+
+        if (pushConstants.size()) {
+            if (this->mPushConstantsData) {
+                free(this->mPushConstantsData);
+            }
+            uint32_t memorySize = sizeof(P);
+            uint32_t size = pushConstants.size();
+            uint32_t totalSize = size * memorySize;
+            this->mPushConstantsData = malloc(totalSize);
+            memcpy(this->mPushConstantsData, pushConstants.data(), totalSize);
+            this->mPushConstantsDataTypeMemorySize = memorySize;
+            this->mPushConstantsSize = size;
+        }
+
+        this->setWorkgroup(workgroup, minWorkgroupSize);
+    }
+
+    /**
+     * Creates descriptor pool, descriptor set layout, and allocates the
+     * descriptor set based on an explicit list of descriptor types (one per
+     * binding). Does NOT write memory objects into the descriptor set.
+     *
+     * @param descriptorTypes The descriptor type for each binding slot.
+     */
+    void createDescriptorResources(
+      const std::vector<vk::DescriptorType>& descriptorTypes);
+
+    /**
+     * Writes the current memory objects (mMemObjects) into the descriptor
+     * set. Requires that createDescriptorResources() has already been called
+     * and that mMemObjects is populated.
+     */
+    void writeDescriptorSets();
+
   private:
     // -------------- ALWAYS OWNED RESOURCES
     std::vector<uint32_t> mSpirv;
@@ -322,13 +363,6 @@ class Algorithm
     uint32_t mPushConstantsDataTypeMemorySize = 0;
     uint32_t mPushConstantsSize = 0;
     Workgroup mWorkgroup;
-
-    // Create util functions
-    void createShaderModule();
-    void createPipeline();
-
-    // Parameters
-    void createParameters();
 };
 
 } // End namespace kp

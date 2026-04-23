@@ -129,13 +129,33 @@ Algorithm::destroy()
 void
 Algorithm::createParameters()
 {
+    KP_LOG_DEBUG("Kompute Algorithm createParameters started");
+
+    std::vector<vk::DescriptorType> descriptorTypes;
+    descriptorTypes.reserve(this->mMemObjects.size());
+    for (const std::shared_ptr<Memory>& mem : this->mMemObjects) {
+        descriptorTypes.push_back(mem->getDescriptorType());
+    }
+
+    this->createDescriptorResources(descriptorTypes);
+    this->writeDescriptorSets();
+
+    KP_LOG_DEBUG("Kompute Algorithm successfully run init");
+}
+
+void
+Algorithm::createDescriptorResources(
+  const std::vector<vk::DescriptorType>& descriptorTypes)
+{
+    KP_LOG_DEBUG(
+      "Kompute Algorithm createDescriptorResources started with {} bindings",
+      descriptorTypes.size());
+
     uint32_t numImages = 0;
     uint32_t numTensors = 0;
 
-    KP_LOG_DEBUG("Kompute Algorithm createParameters started");
-
-    for (const std::shared_ptr<Memory>& mem : this->mMemObjects) {
-        if (mem->getDescriptorType() == vk::DescriptorType::eStorageImage) {
+    for (const vk::DescriptorType& type : descriptorTypes) {
+        if (type == vk::DescriptorType::eStorageImage) {
             numImages++;
         } else {
             numTensors++;
@@ -171,10 +191,10 @@ Algorithm::createParameters()
     this->mFreeDescriptorPool = true;
 
     std::vector<vk::DescriptorSetLayoutBinding> descriptorSetBindings;
-    for (size_t i = 0; i < this->mMemObjects.size(); i++) {
+    for (size_t i = 0; i < descriptorTypes.size(); i++) {
         descriptorSetBindings.push_back(
           vk::DescriptorSetLayoutBinding(i, // Binding index
-                                         mMemObjects[i]->getDescriptorType(),
+                                         descriptorTypes[i],
                                          1, // Descriptor count
                                          vk::ShaderStageFlagBits::eCompute));
     }
@@ -201,7 +221,11 @@ Algorithm::createParameters()
     this->mDevice->allocateDescriptorSets(&descriptorSetAllocateInfo,
                                           this->mDescriptorSet.get());
     this->mFreeDescriptorSet = true;
+}
 
+void
+Algorithm::writeDescriptorSets()
+{
     KP_LOG_DEBUG("Kompute Algorithm updating descriptor sets");
     for (size_t i = 0; i < this->mMemObjects.size(); i++) {
         std::vector<vk::WriteDescriptorSet> computeWriteDescriptorSets;
@@ -215,8 +239,6 @@ Algorithm::createParameters()
         this->mDevice->updateDescriptorSets(computeWriteDescriptorSets,
                                             nullptr);
     }
-
-    KP_LOG_DEBUG("Kompute Algorithm successfully run init");
 }
 
 void
